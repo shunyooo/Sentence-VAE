@@ -133,7 +133,7 @@ class SentenceVAE(nn.Module):
         # required for dynamic stopping of sentence generation
         sequence_idx = torch.arange(0, batch_size, out=self.tensor()).long() # all idx of batch
         sequence_running = torch.arange(0, batch_size, out=self.tensor()).long() # all idx of batch which are still generating
-        sequence_mask = torch.ones(batch_size, out=self.tensor()).byte()
+        sequence_mask = torch.ones(batch_size, out=self.tensor()).bool()
 
         running_seqs = torch.arange(0, batch_size, out=self.tensor()).long() # idx of still generating sequences with respect to current loop
 
@@ -141,7 +141,6 @@ class SentenceVAE(nn.Module):
 
         t=0
         while(t<self.max_sequence_length and len(running_seqs)>0):
-
             if t == 0:
                 input_sequence = to_var(torch.Tensor(batch_size).fill_(self.sos_idx).long())
 
@@ -168,7 +167,7 @@ class SentenceVAE(nn.Module):
 
             # prune input and hidden state according to local update
             if len(running_seqs) > 0:
-                input_sequence = input_sequence[running_seqs]
+                input_sequence = input_sequence.view(-1)[running_seqs]
                 hidden = hidden[:, running_seqs]
 
                 running_seqs = torch.arange(0, len(running_seqs), out=self.tensor()).long()
