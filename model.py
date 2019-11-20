@@ -47,6 +47,35 @@ class SentenceVAE(nn.Module):
         self.latent2hidden = nn.Linear(latent_size, hidden_size * self.hidden_factor)
         self.outputs2vocab = nn.Linear(hidden_size * (2 if bidirectional else 1), vocab_size)
 
+        
+    def encode(self, input_sequence, length):
+        batch_size = input_sequence.size(0)
+        sorted_lengths, sorted_idx = torch.sort(length, descending=True)
+        input_sequence = input_sequence[sorted_idx]
+
+        # ENCODER
+        input_embedding = self.embedding(input_sequence)
+
+        packed_input = rnn_utils.pack_padded_sequence(input_embedding, sorted_lengths.data.tolist(), batch_first=True)
+
+        _, hidden = self.encoder_rnn(packed_input)
+
+        if self.bidirectional or self.num_layers > 1:
+            # flatten hidden state
+            hidden = hidden.view(batch_size, self.hidden_size*self.hidden_factor)
+        else:
+            hidden = hidden.squeeze()
+
+        # REPARAMETERIZATION
+        mean = self.hidden2mean(hidden)
+        logv = self.hidden2logv(hidden)
+        std = torch.exp(0.5 * logv)
+
+        z = to_var(torch.randn([batch_size, self.latent_size]))
+        z = z * std + mean
+        return mean, std, z
+        
+        
     def forward(self, input_sequence, length):
 
         batch_size = input_sequence.size(0)
