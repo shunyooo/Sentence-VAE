@@ -1,0 +1,11 @@
+version: '3.7'
+services:
+  pytorch:
+    build: docker/pytorch
+    ports:
+      - 8888:8888
+    volumes:
+      - ./:/workspace
+    working_dir: /workspace
+    command: /bin/bash
+    privileged: true
