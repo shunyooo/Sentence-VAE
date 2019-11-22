@@ -2,11 +2,18 @@ import torch
 import torch.nn as nn
 import torch.nn.utils.rnn as rnn_utils
 from utils import to_var
+from model_utils import dynamic_rnn
 
 class SentenceVAE(nn.Module):
 
     def __init__(self, vocab_size, embedding_size, rnn_type, hidden_size, word_dropout, embedding_dropout, latent_size,
-                sos_idx, eos_idx, pad_idx, unk_idx, max_sequence_length, num_layers=1, bidirectional=False):
+                sos_idx, eos_idx, pad_idx, unk_idx, max_sequence_length, num_layers=1, bidirectional=False, 
+                cond_vocab_size=None, cond_embedding_size=None, cond_hidden_size=None,
+                ):
+        # WARNING: 分離できるのに共通なものがあるので注意
+        # Enc, Decで共通          ：hidden_size
+        # Enc, Cond-Encで共通     ：latent_size, 
+        # Enc, Dec, Cond-Encで共通：num_layers, bidirectional
 
         super().__init__()
         self.tensor = torch.cuda.FloatTensor if torch.cuda.is_available() else torch.Tensor
@@ -19,9 +26,14 @@ class SentenceVAE(nn.Module):
 
         self.latent_size = latent_size
 
+        self.is_conditional = self.is_conditional(cond_vocab_size, cond_embedding_size, cond_hidden_size)
+        if self.is_conditional:
+            self.cond_hidden_size = cond_hidden_size
+
         self.rnn_type = rnn_type
         self.bidirectional = bidirectional
         self.num_layers = num_layers
+        hidden_size = hidden_size if not self.is_conditional else hidden_size + cond_hidden_size
         self.hidden_size = hidden_size
 
         self.embedding = nn.Embedding(vocab_size, embedding_size)
@@ -37,17 +49,43 @@ class SentenceVAE(nn.Module):
         else:
             raise ValueError()
 
-        self.encoder_rnn = rnn(embedding_size, hidden_size, num_layers=num_layers, bidirectional=self.bidirectional, batch_first=True)
-        self.decoder_rnn = rnn(embedding_size, hidden_size, num_layers=num_layers, bidirectional=self.bidirectional, batch_first=True)
+        self.encoder_rnn = rnn(embedding_size, self.hidden_size, num_layers=num_layers, bidirectional=self.bidirectional, batch_first=True)
+        self.decoder_rnn = rnn(embedding_size, self.hidden_size, num_layers=num_layers, bidirectional=self.bidirectional, batch_first=True)
 
+        # scalar for bidirectional mode
         self.hidden_factor = (2 if bidirectional else 1) * num_layers
 
-        self.hidden2mean = nn.Linear(hidden_size * self.hidden_factor, latent_size)
-        self.hidden2logv = nn.Linear(hidden_size * self.hidden_factor, latent_size)
-        self.latent2hidden = nn.Linear(latent_size, hidden_size * self.hidden_factor)
-        self.outputs2vocab = nn.Linear(hidden_size * (2 if bidirectional else 1), vocab_size)
+        if self.is_conditional:
+            # Conditional Encoder
+            self.cond_embedding = nn.Embedding(cond_vocab_size, cond_embedding_size)
+            self.cond_encoder_rnn = rnn(cond_embedding_size, cond_hidden_size, num_layers=num_layers, bidirectional=self.bidirectional, batch_first=True)
+            # Prior latent
+            self.cond_hidden2mean = nn.Linear(cond_hidden_size * self.hidden_factor, latent_size)
+            self.cond_hidden2logv = nn.Linear(cond_hidden_size * self.hidden_factor, latent_size)
 
-        
+        # Encoder(recogition) latent
+        # ガウス分布のパラメタ推定NNへの入力サイズ
+        self.enc_latent_input_size = (self.hidden_size + (self.cond_hidden_size if self.is_conditional else 0)) * self.hidden_factor
+        self.hidden2mean = nn.Linear(self.enc_latent_input_size, latent_size)
+        self.hidden2logv = nn.Linear(self.enc_latent_input_size, latent_size)
+        # デコーダの隠れサイズへ調整する用NNへの入力サイズ
+        self.dec_before_input_size = latent_size + (self.cond_hidden_size if self.is_conditional else 0)
+        self.latent2hidden = nn.Linear(self.dec_before_input_size , self.hidden_size * self.hidden_factor)
+
+        self.outputs2vocab = nn.Linear(self.hidden_size * (2 if bidirectional else 1), vocab_size)
+
+
+    def is_conditional(self, cond_vocab_size, cond_embedding_size, cond_hidden_size):
+        param_dict = {k:v for k,v in locals().items() if 'cond' in k}
+        valid_param_count = sum([bool(v) for k,v in param_dict.items()])
+        if valid_param_count == len(param_dict):
+            return True
+        elif valid_param_count == 0:
+            return False
+        else:
+            raise ValueError(f'invalid conditional params: {param_dict}')
+
+
     def encode(self, input_sequence, length):
         batch_size = input_sequence.size(0)
         sorted_lengths, sorted_idx = torch.sort(length, descending=True)
@@ -75,35 +113,58 @@ class SentenceVAE(nn.Module):
         z = z * std + mean
         return mean, std, z
         
-        
-    def forward(self, input_sequence, length):
-
-        batch_size = input_sequence.size(0)
-        sorted_lengths, sorted_idx = torch.sort(length, descending=True)
-        input_sequence = input_sequence[sorted_idx]
-
-        # ENCODER
-        input_embedding = self.embedding(input_sequence)
-
-        packed_input = rnn_utils.pack_padded_sequence(input_embedding, sorted_lengths.data.tolist(), batch_first=True)
-
-        _, hidden = self.encoder_rnn(packed_input)
-
+    def _reshape_hidden_for_bidirection(self, hidden, batch_size, hidden_size):
         if self.bidirectional or self.num_layers > 1:
             # flatten hidden state
-            hidden = hidden.view(batch_size, self.hidden_size*self.hidden_factor)
+            return hidden.view(batch_size, hidden_size*self.hidden_factor)
         else:
-            hidden = hidden.squeeze()
+            return hidden.squeeze()
 
+
+    def _reparametarize(self, mean, std, batch_size, latent_size):
         # REPARAMETERIZATION
+        z = to_var(torch.randn([batch_size, latent_size]))
+        z = z * std + mean
+        return z
+
+        
+    def forward(self, input_sequence, length, cond_sequence=None, cond_length=None):
+        assert self.is_conditional == (cond_sequence is not None)
+        if self.is_conditional:
+            assert cond_length is not None, '必要'
+            assert input_sequence.size(0) == cond_sequence.size(0), '同じバッチサイズ'
+        batch_size = input_sequence.size(0)
+
+        # --------------- ENCODER -------------------
+        input_embedding = self.embedding(input_sequence)
+        hidden = dynamic_rnn(self.encoder_rnn, input_embedding, length)
+        hidden = self._reshape_hidden_for_bidirection(hidden, batch_size, self.hidden_size)        
+
+        # Conditional-Encoder
+        if self.is_conditional:
+            cond_embedding = self.cond_embedding(cond_sequence)
+            cond_hidden = dynamic_rnn(self.cond_encoder_rnn, cond_embedding, cond_length)
+            cond_hidden = self._reshape_hidden_for_bidirection(cond_hidden, batch_size, self.cond_hidden_size)
+            hidden = torch.cat([hidden, cond_hidden], dim=1)
+
+        # Encoder Latent
         mean = self.hidden2mean(hidden)
         logv = self.hidden2logv(hidden)
         std = torch.exp(0.5 * logv)
+        z = self._reparametarize(mean, std, batch_size, self.latent_size)
 
-        z = to_var(torch.randn([batch_size, self.latent_size]))
-        z = z * std + mean
+        # Conditional-Encoder Latent
+        if self.is_conditional:
+            cond_mean = self.cond_hidden2mean(cond_hidden)
+            cond_logv = self.cond_hidden2logv(cond_hidden)
+            cond_std = torch.exp(0.5 * cond_logv)
+            cond_z = self._reparametarize(cond_mean, cond_std, batch_size, self.latent_size)
 
-        # DECODER
+        # --------------- DECODER -------------------
+
+        if self.is_conditional:
+            z = torch.cat([z, cond_hidden], dim=1)
+
         hidden = self.latent2hidden(z)
 
         if self.bidirectional or self.num_layers > 1:
@@ -122,8 +183,12 @@ class SentenceVAE(nn.Module):
             decoder_input_sequence = input_sequence.clone()
             decoder_input_sequence[prob < self.word_dropout_rate] = self.unk_idx
             input_embedding = self.embedding(decoder_input_sequence)
+
         input_embedding = self.embedding_dropout(input_embedding)
-        packed_input = rnn_utils.pack_padded_sequence(input_embedding, sorted_lengths.data.tolist(), batch_first=True)
+        
+        sorted_lengths, sorted_idx = torch.sort(length, descending=True)
+        input_embedding = input_embedding[sorted_idx]
+        packed_input = rnn_utils.pack_padded_sequence(input_embedding, sorted_lengths.tolist(), batch_first=True)
 
         # decoder forward pass
         outputs, _ = self.decoder_rnn(packed_input, hidden)
@@ -139,8 +204,10 @@ class SentenceVAE(nn.Module):
         logp = nn.functional.log_softmax(self.outputs2vocab(padded_outputs.view(-1, padded_outputs.size(2))), dim=-1)
         logp = logp.view(b, s, self.embedding.num_embeddings)
 
-
-        return logp, mean, logv, z
+        if self.is_conditional:
+            return logp, mean, logv, z, cond_mean ,cond_logv, cond_z
+        else:
+            return logp, mean, logv, z
 
 
     def inference(self, n=4, z=None):
