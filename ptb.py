@@ -9,9 +9,14 @@ from nltk.tokenize import TweetTokenizer
 
 from utils import OrderedCounter
 
+PAD_INDEX = 0
+UNK_INDEX = 1
+SOS_INDEX = 2
+EOS_INDEX = 3
+
 class PTB(Dataset):
 
-    def __init__(self, data_dir, split, create_data, **kwargs):
+    def __init__(self, data_dir, split,  create_data, **kwargs):
 
         super().__init__()
         self.data_dir = data_dir
@@ -22,6 +27,9 @@ class PTB(Dataset):
         self.raw_data_path = os.path.join(data_dir, 'ptb.'+split+'.txt')
         self.data_file = 'ptb.'+split+'.json'
         self.vocab_file = 'ptb.vocab.json'
+
+        # TODO: 余計なデータを作らないように
+        # self.use_only_input = kwargs.get('use_only_input', False)
 
         if create_data:
             print("Creating new %s ptb data."%split.upper())
@@ -46,6 +54,9 @@ class PTB(Dataset):
             'target': np.asarray(self.data[idx]['target']),
             'length': self.data[idx]['length']
         }
+
+    def __iter__(self):
+        return iter(self)
 
     @property
     def vocab_size(self):
@@ -145,6 +156,13 @@ class PTB(Dataset):
         for st in special_tokens:
             i2w[len(w2i)] = st
             w2i[st] = len(w2i)
+
+        # NOTE: vocab中 で特殊トークンはConditionEncoderでも横断的に現れそうなので、
+        #       そのidは統一しておきたい
+        assert w2i['<pad>'] == PAD_INDEX
+        assert w2i['<unk>'] == UNK_INDEX
+        assert w2i['<sos>'] == SOS_INDEX
+        assert w2i['<eos>'] == EOS_INDEX
 
         with open(self.raw_data_path, 'r') as file:
 
