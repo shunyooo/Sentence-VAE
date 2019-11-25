@@ -166,6 +166,10 @@ class SentenceVAE(nn.Module):
             'NLL_loss': NLL_loss,
             'KL_weight': KL_weight,
             'KL_loss': KL_loss,
+            'z': z,
+            'mean': mean,
+            'logv': logv,
+            'logp': logp,
         }
 
 
