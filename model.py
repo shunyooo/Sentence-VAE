@@ -210,13 +210,21 @@ class SentenceVAE(nn.Module):
             return logp, mean, logv, z
 
 
-    def inference(self, n=4, z=None):
+    def inference(self, cond_sequenc=None, n=4, z=None):
+        assert self.is_conditional == (cond_sequence is not None)
 
         if z is None:
             batch_size = n
             z = to_var(torch.randn([batch_size, self.latent_size]))
         else:
             batch_size = z.size(0)
+
+        # Conditional-Encoder
+        if self.is_conditional:
+            cond_embedding = self.cond_embedding(cond_sequence)
+            cond_hidden = dynamic_rnn(self.cond_encoder_rnn, cond_embedding, cond_length)
+            cond_hidden = self._reshape_hidden_for_bidirection(cond_hidden, batch_size, self.cond_hidden_size)
+            hidden = torch.cat([hidden, cond_hidden], dim=1)
 
         hidden = self.latent2hidden(z)
 
