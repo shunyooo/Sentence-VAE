@@ -112,7 +112,7 @@ class SentenceVAE(nn.Module):
             prob[(target_sequence.data - self.sos_idx) * (target_sequence.data - self.pad_idx) == 0] = 1
             decoder_input_sequence = target_sequence.clone()
             decoder_input_sequence[prob < self.word_dropout_rate] = self.unk_idx
-            target_embedding = self.embedding(decoder_input_sequence)
+            target_embedding = self.decoder_embedding(decoder_input_sequence)
         target_embedding = self.embedding_dropout(target_embedding)
         packed_input = rnn_utils.pack_padded_sequence(target_embedding, sorted_lengths.data.tolist(), batch_first=True)
 
@@ -134,7 +134,7 @@ class SentenceVAE(nn.Module):
 
         # project outputs to vocab
         logp = nn.functional.log_softmax(self.outputs2vocab(padded_outputs.view(-1, padded_outputs.size(2))), dim=-1)
-        logp = logp.view(b, s, self.embedding.num_embeddings)
+        logp = logp.view(b, s, self.decoder_embedding.num_embeddings)
         return logp
 
     @staticmethod
