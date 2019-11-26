@@ -162,11 +162,11 @@ class SentenceVAE(nn.Module):
         logp, mean, logv, z = self(_input, input_length, target, target_length)
 
         # cut-off unnecessary padding from target, and flatten
-        target = target[:, :torch.max(target_length).data].contiguous().view(-1)
+        target = target[:, :torch.max(target_length).data].contiguous()
         logp = logp.view(-1, logp.size(2))
 
         # Negative Log Likelihood
-        NLL_loss = NLL(logp, target)
+        NLL_loss = NLL(logp, target.view(-1))
 
         # KL Divergence
         KL_loss = -0.5 * torch.sum(1 + logv - mean.pow(2) - logv.exp())
@@ -175,12 +175,12 @@ class SentenceVAE(nn.Module):
         loss = NLL_loss + KL_weight * KL_loss / batch_size
 
         if self.use_bow_loss:
-            bow_logit = self.latent2bow(z)
-            # target出現単語のlog_softmaxの総和を求める
-            bow_loss1 = -nn.functional.log_softmax(bow_logit, dim=1).sum(dim=0)[target]
-            # vocab sizeで正規化（いるかわからん）
-            bow_loss = bow_loss1.sum() / bow_logit.size(1)
-            avg_bow_loss = bow_loss / batch_size
+            target_mask = torch.sign(target).detach().float()
+            bow_logit = self.latent2bow(z) # [batch_size, vocab_size]
+            # 各出現単語のlog_softmaxを出す. [batch_size, max_length_in_batch]
+            bow_loss1 = -nn.functional.log_softmax(bow_logit, dim=1).gather(1, target) * target_mask
+            bow_loss = torch.sum(bow_loss1, 1)
+            avg_bow_loss = torch.mean(bow_loss)
             loss += avg_bow_loss
 
         return {
@@ -192,7 +192,6 @@ class SentenceVAE(nn.Module):
             'mean': mean,
             'logv': logv,
             'logp': logp,
-            'bow_loss': bow_loss,
             'avg_bow_loss': avg_bow_loss,
         }
 
