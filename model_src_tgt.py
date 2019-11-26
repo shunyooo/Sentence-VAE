@@ -10,7 +10,8 @@ NLL = torch.nn.NLLLoss(reduction='sum', ignore_index=PAD_INDEX)
 class SentenceVAE(nn.Module):
 
     def __init__(self, vocab_size, out_vocab_size, embedding_size, rnn_type, hidden_size, word_dropout, embedding_dropout, latent_size,
-                sos_idx, eos_idx, pad_idx, unk_idx, max_sequence_length, num_layers=1, bidirectional=False):
+                sos_idx, eos_idx, pad_idx, unk_idx, max_sequence_length, num_layers=1, bidirectional=False, 
+                use_bow_loss=True, bow_hidden_size=None):
 
         super().__init__()
         self.tensor = torch.cuda.FloatTensor if torch.cuda.is_available() else torch.Tensor
@@ -51,6 +52,17 @@ class SentenceVAE(nn.Module):
         self.hidden2logv = nn.Linear(hidden_size * self.hidden_factor, latent_size)
         self.latent2hidden = nn.Linear(latent_size, hidden_size * self.hidden_factor)
         self.outputs2vocab = nn.Linear(hidden_size * (2 if bidirectional else 1), out_vocab_size)
+
+        self.use_bow_loss = use_bow_loss
+        if use_bow_loss:
+            assert bow_hidden_size is not None
+            self.latent2bow = nn.Sequential(
+                nn.Linear(latent_size, bow_hidden_size),
+                nn.Tanh(),
+                nn.Dropout(p=embedding_dropout),
+                nn.Linear(bow_hidden_size, out_vocab_size)
+            )
+
 
 
     def forward(self, input_sequence, input_length, target_sequence, target_length):
@@ -160,7 +172,17 @@ class SentenceVAE(nn.Module):
         KL_loss = -0.5 * torch.sum(1 + logv - mean.pow(2) - logv.exp())
         KL_weight = self._kl_anneal_function(anneal_function, step, k, x0)
 
-        loss = (NLL_loss + KL_weight * KL_loss)/batch_size
+        loss = NLL_loss + KL_weight * KL_loss / batch_size
+
+        if self.use_bow_loss:
+            bow_logit = self.latent2bow(z)
+            # target出現単語のlog_softmaxの総和を求める
+            bow_loss1 = -nn.functional.log_softmax(bow_logit, dim=1).sum(dim=0)[target]
+            # vocab sizeで正規化（いるかわからん）
+            bow_loss = bow_loss1.sum() / bow_logit.size(1)
+            avg_bow_loss = bow_loss / batch_size
+            loss += avg_bow_loss
+
         return {
             'loss': loss,
             'NLL_loss': NLL_loss,
@@ -170,6 +192,8 @@ class SentenceVAE(nn.Module):
             'mean': mean,
             'logv': logv,
             'logp': logp,
+            'bow_loss': bow_loss,
+            'avg_bow_loss': avg_bow_loss,
         }
 
 
