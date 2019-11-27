@@ -172,7 +172,7 @@ class SentenceVAE(nn.Module):
         KL_loss = -0.5 * torch.sum(1 + logv - mean.pow(2) - logv.exp())
         KL_weight = self._kl_anneal_function(anneal_function, step, k, x0)
 
-        loss = NLL_loss + KL_weight * KL_loss / batch_size
+        loss = (NLL_loss + KL_weight * KL_loss)/batch_size
 
         if self.use_bow_loss:
             target_mask = torch.sign(target).detach().float()
@@ -180,7 +180,7 @@ class SentenceVAE(nn.Module):
             # 各出現単語のlog_softmaxを出す. [batch_size, max_length_in_batch]
             bow_loss1 = -nn.functional.log_softmax(bow_logit, dim=1).gather(1, target) * target_mask
             bow_loss = torch.sum(bow_loss1, 1)
-            avg_bow_loss = torch.mean(bow_loss)
+            avg_bow_loss = torch.mean(bow_loss) # /batch_size
             loss += avg_bow_loss
 
         return {
