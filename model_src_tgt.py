@@ -228,7 +228,7 @@ class SentenceVAE(nn.Module):
 
             input_sequence = input_sequence.unsqueeze(1)
 
-            input_embedding = self.embedding(input_sequence)
+            input_embedding = self.decoder_embedding(input_sequence)
 
             output, hidden = self.decoder_rnn(input_embedding, hidden)
 
