@@ -156,14 +156,11 @@ class SentenceVAE(nn.Module):
             return min(1, step/x0)
 
 
-    def loss(self, _input, input_length, anneal_function, step, k, x0):
-        batch_size = _input.size(0)
-        logp, mean, logv, z = self(_input, input_length)
-
-        target, target_length = _input, input_length
+    def loss(self, logp, target, length, mean, logv, anneal_function, step, k, x0, z=None):
+        batch_size = target.size(0)
 
         # cut-off unnecessary padding from target, and flatten
-        target = target[:, :torch.max(target_length).data].contiguous()
+        target = target[:, :torch.max(length).data].contiguous()
         logp = logp.view(-1, logp.size(2))
 
         # Negative Log Likelihood
@@ -174,8 +171,16 @@ class SentenceVAE(nn.Module):
         KL_weight = self._kl_anneal_function(anneal_function, step, k, x0)
 
         loss = (NLL_loss + KL_weight * KL_loss)/batch_size
-
-        if self.use_bow_loss:
+        
+        loss_dict = {
+            'loss': loss,
+            'NLL_loss': NLL_loss,
+            'KL_weight': KL_weight,
+            'KL_loss': KL_loss,
+        }
+        
+        if 'use_bow_loss' in self.__dict__.keys() and self.use_bow_loss:
+            assert z is not None, 'bow loss を使う場合は z を input してください'
             target_mask = torch.sign(target).detach().float()
             bow_logit = self.latent2bow(z) # [batch_size, vocab_size]
             # 各出現単語のlog_softmaxを出す. [batch_size, max_length_in_batch]
@@ -183,18 +188,9 @@ class SentenceVAE(nn.Module):
             bow_loss = torch.sum(bow_loss1, 1)
             avg_bow_loss = torch.mean(bow_loss) # /batch_size
             loss += avg_bow_loss
+            loss_dict['avg_bow_loss'] = avg_bow_loss
 
-        return {
-            'loss': loss,
-            'NLL_loss': NLL_loss,
-            'KL_weight': KL_weight,
-            'KL_loss': KL_loss,
-            'z': z,
-            'mean': mean,
-            'logv': logv,
-            'logp': logp,
-            'avg_bow_loss': avg_bow_loss,
-        }
+        return loss_dict
 
 
     def inference(self, n=4, z=None):
