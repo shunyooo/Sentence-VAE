@@ -122,7 +122,7 @@ class SentenceVAE(nn.Module):
 
         logp = self.decode_batch(dec_input, out_sequence, out_length)
 
-        res_dict.update({'logp': logp, 'mean': mean, 'logv': logv, 'z': z})
+        res_dict.update({'logp': logp, 'mean': mean, 'logv': logv, 'z': z, 'dec_input': dec_input})
         return res_dict
         
 
@@ -249,7 +249,7 @@ class SentenceVAE(nn.Module):
         return kld
 
 
-    def loss(self, logp, target, length, mean, logv, anneal_function, step, k, x0, z=None, 
+    def loss(self, logp, target, length, mean, logv, anneal_function, step, k, x0, bow_input=None, 
         cond_mean=None, cond_logv=None):
         batch_size = target.size(0)
 
@@ -280,9 +280,9 @@ class SentenceVAE(nn.Module):
         
         # BOW loss
         if 'use_bow_loss' in self.__dict__.keys() and self.use_bow_loss:
-            assert z is not None, 'bow loss を使う場合は z(bow予測モデルへの入力) を input してください'
+            assert bow_input is not None, 'bow loss を使う場合は bow予測モデルへの入力 を input してください'
             target_mask = torch.sign(target).detach().float()
-            bow_logit = self.latent2bow(z) # [batch_size, vocab_size]
+            bow_logit = self.latent2bow(bow_input) # [batch_size, vocab_size]
             # 各出現単語のlog_softmaxを出す. [batch_size, max_length_in_batch]
             bow_loss1 = -nn.functional.log_softmax(bow_logit, dim=1).gather(1, target) * target_mask
             bow_loss = torch.sum(bow_loss1, 1)
