@@ -141,6 +141,8 @@ class SentenceVAE(nn.Module):
         hidden = self._reshape_hidden_for_bidirection(hidden, batch_size, self.hidden_size)
         hidden = hidden[reversed_idx]
 
+        assert hidden.size(0) == batch_size, hidde.size(1) == self.hidden_size
+
         if extra_hidden is not None:
             assert self.is_conditional, 'extra_hidden を追加しているのに is_conditional が無効になっています'
             hidden = torch.cat([hidden, extra_hidden], dim=1)
@@ -167,8 +169,10 @@ class SentenceVAE(nn.Module):
         packed_input = rnn_utils.pack_padded_sequence(cond_embedding, sorted_lengths.data.tolist(), batch_first=True)
 
         _, hidden = self.cond_encoder_rnn(packed_input)
-        hidden = self._reshape_hidden_for_bidirection(hidden, batch_size, self.hidden_size)
+        hidden = self._reshape_hidden_for_bidirection(hidden, batch_size, self.cond_hidden_size)
         hidden = hidden[reversed_idx]
+
+        assert hidden.size(0) == batch_size, hidde.size(1) == self.cond_hidden_size
 
         # REPARAMETERIZATION
         mean = self.cond_hidden2mean(hidden)
@@ -185,7 +189,7 @@ class SentenceVAE(nn.Module):
             # flatten hidden state
             return hidden.view(batch_size, hidden_size*self.hidden_factor)
         else:
-            return hidden.squeeze()
+            return hidden.view(batch_size, hidden_size)
 
 
     def decode_batch(self, latent, out_sequence, out_length):
