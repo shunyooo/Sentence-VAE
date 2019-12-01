@@ -89,7 +89,7 @@ class SentenceVAE(nn.Module):
         if use_bow_loss:
             assert bow_hidden_size is not None
             self.latent2bow = nn.Sequential(
-                nn.Linear(latent_size, bow_hidden_size),
+                nn.Linear(self.dec_before_input_size, bow_hidden_size),
                 nn.Tanh(),
                 nn.Dropout(p=embedding_dropout),
                 nn.Linear(bow_hidden_size, out_vocab_size)
