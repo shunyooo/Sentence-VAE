@@ -43,3 +43,7 @@ geckodriver.log
 *.iml
 
 data
+
+bin
+dumps
+logs
