@@ -11,7 +11,7 @@ class SentenceVAE(nn.Module):
 
     def __init__(self, vocab_size, embedding_size, rnn_type, hidden_size, word_dropout, embedding_dropout, latent_size,
                 sos_idx, eos_idx, pad_idx, unk_idx, max_sequence_length, num_layers=1, bidirectional=False, 
-                use_bow_loss=True, bow_hidden_size=None, ):
+                use_bow_loss=True, bow_hidden_size=None, is_gumbel=False, gumbel_tau=None):
         """
         Extention
         ■ bow loss : use_bow_loss, bow_hidden_size で指定
@@ -54,21 +54,29 @@ class SentenceVAE(nn.Module):
 
         self.hidden_factor = (2 if bidirectional else 1) * num_layers
 
+        encoded_hidden_size = self.hidden_size * self.hidden_factor
+        before_latent_input_size = encoded_hidden_size
+        self.is_gumbel = is_gumbel
+        if self.is_gumbel:
+            assert gumbel_tau is not None
+            self.gumbel_tau = gumbel_tau
+            self.hidden2gumbel = nn.Linear(encoded_hidden_size, vocab_size)
+            before_latent_input_size = embedding_size
+
         # Encoder(recogition) latent
         # ガウス分布のパラメタ推定NNへの入力サイズ
-        self.enc_latent_input_size = self.hidden_size * self.hidden_factor
-        self.hidden2mean = nn.Linear(self.enc_latent_input_size, latent_size)
-        self.hidden2logv = nn.Linear(self.enc_latent_input_size, latent_size)
+        self.hidden2mean = nn.Linear(before_latent_input_size, latent_size)
+        self.hidden2logv = nn.Linear(before_latent_input_size, latent_size)
         # デコーダの隠れサイズへ調整する用NNへの入力サイズ
-        self.dec_before_input_size = latent_size
-        self.latent2hidden = nn.Linear(self.dec_before_input_size, hidden_size * self.hidden_factor)
+        self.before_dec_input_size = latent_size
+        self.latent2hidden = nn.Linear(self.before_dec_input_size, hidden_size * self.hidden_factor)
         self.outputs2vocab = nn.Linear(hidden_size * (2 if bidirectional else 1), out_vocab_size)
 
         self.use_bow_loss = use_bow_loss
         if use_bow_loss:
             assert bow_hidden_size is not None
             self.latent2bow = nn.Sequential(
-                nn.Linear(self.dec_before_input_size, bow_hidden_size),
+                nn.Linear(self.before_dec_input_size, bow_hidden_size),
                 nn.Tanh(),
                 nn.Dropout(p=embedding_dropout),
                 nn.Linear(bow_hidden_size, out_vocab_size)
@@ -107,6 +115,12 @@ class SentenceVAE(nn.Module):
         hidden = hidden[reversed_idx]
 
         assert hidden.size(0) == batch_size, hidde.size(1) == self.hidden_size
+
+        # GUMBEL SOFTMAX
+        if self.is_gumbel:
+            gumbel_bow = self.hidden2gumbel(hidden)
+            gumbel_bow = nn.functional.gumbel_softmax(gumbel_bow, tau=self.gumbel_tau)
+            hidden = torch.matmul(gumbel_bow, self.embedding.weight)
 
         # REPARAMETERIZATION
         mean = self.hidden2mean(hidden)
