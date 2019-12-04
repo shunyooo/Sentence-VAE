@@ -88,16 +88,29 @@ class SentenceVAE(nn.Module):
         res_dict = {}
 
         # --------------- ENCODE ------------------
-        mean, logv, z = self.encode(input_sequence, input_length)
+        hidden = self.encode(input_sequence, input_length)
+
+        # ----------- GUMBEL SOFTMAX --------------
+        if self.is_gumbel:
+            gumbel_softmax = self.gumbel_softmax(hidden)
+            hidden = torch.matmul(gumbel_softmax, self.embedding.weight)
+
+        # ----------- REPARAMETERIZE --------------
+        mean, logv, z = self.hidden2latent(hidden)
 
         # --------------- DECODE ------------------
-        out_sequence, out_length = input_sequence, input_length
-        dec_input = z
+        out_sequence, out_length, dec_input = input_sequence, input_length, z
         logp = self.decode_batch(dec_input, out_sequence, out_length)
 
         res_dict.update({'logp': logp, 'mean': mean, 'logv': logv, 'z': z, 'dec_input': dec_input})
         return res_dict
-        
+
+
+    def gumbel_softmax(self, hidden):
+        gumbel_logits = self.hidden2gumbel(hidden)
+        gs = nn.functional.gumbel_softmax(gumbel_logits, tau=self.gumbel_tau)
+        return gs
+
 
     def encode(self, input_sequence, length):
         batch_size = input_sequence.size(0)
@@ -115,14 +128,12 @@ class SentenceVAE(nn.Module):
         hidden = hidden[reversed_idx]
 
         assert hidden.size(0) == batch_size, hidde.size(1) == self.hidden_size
+        return hidden
 
-        # GUMBEL SOFTMAX
-        if self.is_gumbel:
-            gumbel_bow = self.hidden2gumbel(hidden)
-            gumbel_bow = nn.functional.gumbel_softmax(gumbel_bow, tau=self.gumbel_tau)
-            hidden = torch.matmul(gumbel_bow, self.embedding.weight)
 
-        # REPARAMETERIZATION
+    def hidden2latent(self, hidden):
+        # --------------- REPARAMETERIZATION ------------------
+        batch_size = hidden.size(0)
         mean = self.hidden2mean(hidden)
         logv = self.hidden2logv(hidden)
         std = torch.exp(0.5 * logv)
