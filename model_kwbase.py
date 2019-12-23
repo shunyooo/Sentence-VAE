@@ -23,6 +23,7 @@ class SentenceVAE(nn.Module):
         super().__init__()
         self.tensor = torch.cuda.FloatTensor if torch.cuda.is_available() else torch.Tensor
 
+        # tgtのmax_sequence_lengthで良さそう
         self.max_sequence_length = max_sequence_length
         self.sos_idx = sos_idx
         self.eos_idx = eos_idx
@@ -152,25 +153,6 @@ class SentenceVAE(nn.Module):
 
         assert hidden.size(0) == batch_size, hidde.size(1) == self.hidden_size
         return hidden 
-
-
-    def encode(self, input_sequence, length, extra_hidden=None):
-        batch_size = input_sequence.size(0)
-        sorted_lengths, sorted_idx = torch.sort(length, descending=True)
-        input_sequence = input_sequence[sorted_idx]
-        _, reversed_idx = torch.sort(sorted_idx)
-
-        # -------------------- ENCODER ------------------------
-        input_embedding = self.embedding(input_sequence)
-
-        packed_input = rnn_utils.pack_padded_sequence(input_embedding, sorted_lengths.data.tolist(), batch_first=True)
-
-        _, hidden = self.encoder_rnn(packed_input)
-        hidden = self._reshape_hidden_for_bidirection(hidden, batch_size, self.hidden_size)
-        hidden = hidden[reversed_idx]
-
-        assert hidden.size(0) == batch_size, hidde.size(1) == self.hidden_size
-        return hidden
 
 
     def hidden2latent(self, hidden):
