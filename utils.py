@@ -2,6 +2,7 @@ import torch
 import numpy as np
 from torch.autograd import Variable
 from collections import defaultdict, Counter, OrderedDict
+from ptb import SOS_INDEX, UNK_INDEX, PAD_INDEX, EOS_INDEX
 
 class AttributeDict(object):
     def __init__(self, obj):
@@ -62,6 +63,32 @@ def idx2word(idx, i2w, pad_idx):
 
 
     return sent_str
+
+
+def to_tensor(arr_like, cuda=True):
+    tensor = torch.Tensor(arr_like)
+    return tensor.cuda() if cuda and torch.cuda.is_available() else tensor
+
+
+def ids2text(id_list, i2w, sep=''):
+    return sep.join([i2w[f'{i}'] for i in id_list])
+
+
+def ids2ptext(id_list, i2w, sep=''):
+    text = ids2text(id_list, i2w, sep)
+    return text.replace('<eos>', '').replace('<pad>', '')
+
+
+def words2ids(words, w2i):
+    assert type(words) == list
+    return [w2i.get(word, UNK_INDEX) for word in words]
+
+
+def words2input(words, w2i):
+    id_list = [SOS_INDEX] + words2ids(words, w2i)
+    sample_input = to_tensor(id_list).view(1,-1).to(dtype=torch.int64)
+    sample_length = to_tensor([len(id_list)]).to(dtype=torch.int64)
+    return {'input': sample_input, 'length': sample_length}
 
 
 def interpolate(start, end, steps):
