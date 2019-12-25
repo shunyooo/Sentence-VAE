@@ -1,8 +1,6 @@
-import torch
 import numpy as np
-from torch.autograd import Variable
 from collections import defaultdict, Counter, OrderedDict
-from ptb import SOS_INDEX, UNK_INDEX, PAD_INDEX, EOS_INDEX
+from constant import SOS_INDEX, UNK_INDEX, PAD_INDEX, EOS_INDEX
 
 class AttributeDict(object):
     def __init__(self, obj):
@@ -41,11 +39,6 @@ class OrderedCounter(Counter, OrderedDict):
     def __reduce__(self):
         return self.__class__, (OrderedDict(self),)
 
-def to_var(x, volatile=False):
-    if torch.cuda.is_available():
-        x = x.cuda()
-    return Variable(x, volatile=volatile)
-
 
 def idx2word(idx, i2w, pad_idx):
 
@@ -65,11 +58,6 @@ def idx2word(idx, i2w, pad_idx):
     return sent_str
 
 
-def to_tensor(arr_like, cuda=True):
-    tensor = torch.Tensor(arr_like)
-    return tensor.cuda() if cuda and torch.cuda.is_available() else tensor
-
-
 def ids2text(id_list, i2w, sep=''):
     return sep.join([i2w[f'{i}'] for i in id_list])
 
@@ -82,13 +70,6 @@ def ids2ptext(id_list, i2w, sep=''):
 def words2ids(words, w2i):
     assert type(words) == list
     return [w2i.get(word, UNK_INDEX) for word in words]
-
-
-def words2input(words, w2i):
-    id_list = [SOS_INDEX] + words2ids(words, w2i)
-    sample_input = to_tensor(id_list).view(1,-1).to(dtype=torch.int64)
-    sample_length = to_tensor([len(id_list)]).to(dtype=torch.int64)
-    return {'input': sample_input, 'length': sample_length}
 
 
 def interpolate(start, end, steps):
@@ -106,6 +87,7 @@ def experiment_name(args, ts):
     if args.experiment_name is not None:
         exp_name += f'{args.experiment_name}_'
         
+    exp_name += "TS=%s_"%ts
     exp_name += "BS=%i_"%args.batch_size
     exp_name += "LR={}_".format(args.learning_rate)
     exp_name += "EB=%i_"%args.embedding_size
@@ -117,7 +99,6 @@ def experiment_name(args, ts):
     exp_name += "WD={}_".format(args.word_dropout)
     exp_name += "ANN=%s_"%args.anneal_function.upper()
     exp_name += "K={}_".format(args.k)
-    exp_name += "X0=%i_"%args.x0
-    exp_name += "TS=%s"%ts
+    exp_name += "X0=%i"%args.x0
     
     return exp_name

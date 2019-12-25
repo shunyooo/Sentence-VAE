@@ -1,8 +1,8 @@
 import torch
 import torch.nn as nn
 import torch.nn.utils.rnn as rnn_utils
-from utils import to_var
-from ptb import PAD_INDEX
+from model_utils import to_var
+from constant import PAD_INDEX
 import numpy as np
 
 NLL = torch.nn.NLLLoss(reduction='sum', ignore_index=PAD_INDEX)
@@ -11,19 +11,15 @@ class SentenceVAE(nn.Module):
 
     def __init__(self, vocab_size, embedding_size, rnn_type, hidden_size, word_dropout, embedding_dropout, latent_size,
                 sos_idx, eos_idx, pad_idx, unk_idx, max_sequence_length, num_layers=1, bidirectional=False, 
-                use_bow_loss=True, bow_hidden_size=None, out_vocab_size=None,
-                cond_vocab_size=None, cond_embedding_size=None, cond_hidden_size=None,
-                ):
+                use_bow_loss=True, bow_hidden_size=None, is_gumbel=False, gumbel_tau=None):
         """
         Extention
         ■ bow loss : use_bow_loss, bow_hidden_size で指定
-        ■ diff vocab input : InputとOutputでvocabが違う場合に指定. forwardのInput等に影響あり
         """
 
         super().__init__()
         self.tensor = torch.cuda.FloatTensor if torch.cuda.is_available() else torch.Tensor
 
-        # tgtのmax_sequence_lengthで良さそう
         self.max_sequence_length = max_sequence_length
         self.sos_idx = sos_idx
         self.eos_idx = eos_idx
@@ -32,28 +28,18 @@ class SentenceVAE(nn.Module):
 
         self.latent_size = latent_size
 
-        self.is_conditional = is_conditional(cond_vocab_size, cond_embedding_size, cond_hidden_size)
-        if self.is_conditional:
-            self.cond_hidden_size = cond_hidden_size
-
         self.rnn_type = rnn_type
         self.bidirectional = bidirectional
         self.num_layers = num_layers
 
-        hidden_size = hidden_size if not self.is_conditional else hidden_size + cond_hidden_size
         self.hidden_size = hidden_size
 
         self.embedding = nn.Embedding(vocab_size, embedding_size)
+        self.decoder_embedding = self.embedding
         self.word_dropout_rate = word_dropout
         self.embedding_dropout = nn.Dropout(p=embedding_dropout)
-
-        self.is_inout_vocab_diff = out_vocab_size is not None
-        if self.is_inout_vocab_diff:
-            self.decoder_embedding = nn.Embedding(out_vocab_size, embedding_size)
-        else:
-            self.decoder_embedding = self.embedding
-            out_vocab_size = vocab_size
-
+        out_vocab_size = vocab_size
+            
         if rnn_type == 'rnn':
             rnn = nn.RNN
         elif rnn_type == 'gru':
@@ -68,29 +54,29 @@ class SentenceVAE(nn.Module):
 
         self.hidden_factor = (2 if bidirectional else 1) * num_layers
 
-        if self.is_conditional:
-            # Conditional Encoder
-            self.cond_embedding = nn.Embedding(cond_vocab_size, cond_embedding_size)
-            self.cond_encoder_rnn = rnn(cond_embedding_size, cond_hidden_size, num_layers=num_layers, bidirectional=self.bidirectional, batch_first=True)
-            # Prior latent
-            self.cond_hidden2mean = nn.Linear(cond_hidden_size * self.hidden_factor, latent_size)
-            self.cond_hidden2logv = nn.Linear(cond_hidden_size * self.hidden_factor, latent_size)
+        encoded_hidden_size = self.hidden_size * self.hidden_factor
+        before_latent_input_size = encoded_hidden_size
+        self.is_gumbel = is_gumbel
+        if self.is_gumbel:
+            assert gumbel_tau is not None
+            self.gumbel_tau = gumbel_tau
+            self.hidden2gumbel = nn.Linear(encoded_hidden_size, vocab_size)
+            before_latent_input_size = embedding_size
 
         # Encoder(recogition) latent
         # ガウス分布のパラメタ推定NNへの入力サイズ
-        self.enc_latent_input_size = (self.hidden_size + (self.cond_hidden_size if self.is_conditional else 0)) * self.hidden_factor
-        self.hidden2mean = nn.Linear(self.enc_latent_input_size, latent_size)
-        self.hidden2logv = nn.Linear(self.enc_latent_input_size, latent_size)
+        self.hidden2mean = nn.Linear(before_latent_input_size, latent_size)
+        self.hidden2logv = nn.Linear(before_latent_input_size, latent_size)
         # デコーダの隠れサイズへ調整する用NNへの入力サイズ
-        self.dec_before_input_size = latent_size + (self.cond_hidden_size if self.is_conditional else 0)
-        self.latent2hidden = nn.Linear(self.dec_before_input_size, hidden_size * self.hidden_factor)
+        self.before_dec_input_size = latent_size
+        self.latent2hidden = nn.Linear(self.before_dec_input_size, hidden_size * self.hidden_factor)
         self.outputs2vocab = nn.Linear(hidden_size * (2 if bidirectional else 1), out_vocab_size)
 
         self.use_bow_loss = use_bow_loss
         if use_bow_loss:
             assert bow_hidden_size is not None
             self.latent2bow = nn.Sequential(
-                nn.Linear(self.dec_before_input_size, bow_hidden_size),
+                nn.Linear(self.before_dec_input_size, bow_hidden_size),
                 nn.Tanh(),
                 nn.Dropout(p=embedding_dropout),
                 nn.Linear(bow_hidden_size, out_vocab_size)
@@ -98,42 +84,32 @@ class SentenceVAE(nn.Module):
 
 
 
-    def forward(self, input_sequence, input_length, out_sequence=None, out_length=None,
-        cond_sequence=None, cond_length=None):
-        # --------------- CHECK -------------------
-        assert (out_sequence is not None) == self.is_inout_vocab_diff, f'out_sequence: {out_sequence is not None} == inout_vocab_diff: {self.is_inout_vocab_diff} であるべきです.'
-        assert (cond_sequence is not None and cond_length is not None) == self.is_conditional, f'cond_sequence: {cond_sequence is not None}, cond_length: {cond_length is not None} == is_conditional: {self.is_conditional} であるべきです.'
-
+    def forward(self, input_sequence, input_length):
         res_dict = {}
-        # --------- CONDITIONAL ENCODE ------------
-        cond_hidden = None
-        if self.is_conditional:
-            cond_hidden, cond_mean, cond_logv, cond_z = self.encode_condition(cond_sequence, cond_length)
-            res_dict.update({'cond_hidden': cond_hidden, 'cond_mean': cond_mean, 'cond_logv': cond_logv, 'cond_z': cond_z,})
 
         # --------------- ENCODE ------------------
         hidden = self.encode(input_sequence, input_length)
 
-        # ---------- CONCAT CONDITIONAL -----------
-        if cond_hidden is not None:
-            hidden = torch.cat([hidden, cond_hidden], dim=1)
+        # ----------- GUMBEL SOFTMAX --------------
+        if self.is_gumbel:
+            gumbel_softmax = self.gumbel_softmax(hidden)
+            hidden = torch.matmul(gumbel_softmax, self.embedding.weight)
 
         # ----------- REPARAMETERIZE --------------
         mean, logv, z = self.hidden2latent(hidden)
 
         # --------------- DECODE ------------------
-        dec_input = z
-
-        if self.is_conditional:
-            dec_input = torch.cat([z, cond_hidden], dim=1)
-
-        if out_sequence is None:
-            out_sequence, out_length = input_sequence, input_length
-
+        out_sequence, out_length, dec_input = input_sequence, input_length, z
         logp = self.decode_batch(dec_input, out_sequence, out_length)
 
         res_dict.update({'logp': logp, 'mean': mean, 'logv': logv, 'z': z, 'dec_input': dec_input})
         return res_dict
+
+
+    def gumbel_softmax(self, hidden):
+        gumbel_logits = self.hidden2gumbel(hidden)
+        gs = nn.functional.gumbel_softmax(gumbel_logits, tau=self.gumbel_tau)
+        return gs
 
 
     def encode(self, input_sequence, length):
@@ -152,7 +128,7 @@ class SentenceVAE(nn.Module):
         hidden = hidden[reversed_idx]
 
         assert hidden.size(0) == batch_size, hidde.size(1) == self.hidden_size
-        return hidden 
+        return hidden
 
 
     def hidden2latent(self, hidden):
@@ -165,33 +141,6 @@ class SentenceVAE(nn.Module):
         z = to_var(torch.randn([batch_size, self.latent_size]))
         z = z * std + mean
         return mean, logv, z
-
-
-    def encode_condition(self, cond_sequence, cond_length):
-        assert self.is_conditional is not None and cond_sequence is not None and cond_length is not None
-        batch_size = cond_sequence.size(0)
-        sorted_lengths, sorted_idx = torch.sort(cond_length, descending=True)
-        cond_sequence = cond_sequence[sorted_idx]
-        _, reversed_idx = torch.sort(sorted_idx)
-
-        # -------------------- CONDITIONAL ENCODER ------------------------
-        cond_embedding = self.cond_embedding(cond_sequence)
-        packed_input = rnn_utils.pack_padded_sequence(cond_embedding, sorted_lengths.data.tolist(), batch_first=True)
-
-        _, hidden = self.cond_encoder_rnn(packed_input)
-        hidden = self._reshape_hidden_for_bidirection(hidden, batch_size, self.cond_hidden_size)
-        hidden = hidden[reversed_idx]
-
-        assert hidden.size(0) == batch_size, hidde.size(1) == self.cond_hidden_size
-
-        # REPARAMETERIZATION
-        mean = self.cond_hidden2mean(hidden)
-        logv = self.cond_hidden2logv(hidden)
-        std = torch.exp(0.5 * logv)
-        z = to_var(torch.randn([batch_size, self.latent_size]))
-        z = z * std + mean
-
-        return hidden, mean, logv, z
 
 
     def _reshape_hidden_for_bidirection(self, hidden, batch_size, hidden_size):
@@ -263,8 +212,7 @@ class SentenceVAE(nn.Module):
         return kld
 
 
-    def loss(self, logp, target, length, mean, logv, anneal_function, step, k, x0, bow_input=None, 
-        cond_mean=None, cond_logv=None):
+    def loss(self, logp, target, length, mean, logv, anneal_function, step, k, x0, bow_input=None):
         batch_size = target.size(0)
 
         # cut-off unnecessary padding from target, and flatten
@@ -275,11 +223,7 @@ class SentenceVAE(nn.Module):
         NLL_loss = NLL(logp, target.view(-1))
 
         # KL Divergence
-        if self.is_conditional:
-            KL_loss = self.gaussian_kld(mean, logv, cond_mean, cond_logv)
-            KL_loss = torch.mean(KL_loss)
-        else:
-            KL_loss = -0.5 * torch.sum(1 + logv - mean.pow(2) - logv.exp())
+        KL_loss = -0.5 * torch.sum(1 + logv - mean.pow(2) - logv.exp())
 
         KL_weight = self._kl_anneal_function(anneal_function, step, k, x0)
 
@@ -386,14 +330,3 @@ class SentenceVAE(nn.Module):
         save_to[running_seqs] = running_latest
 
         return save_to
-
-
-def is_conditional(cond_vocab_size, cond_embedding_size, cond_hidden_size):
-    param_dict = {k:v for k,v in locals().items() if 'cond' in k}
-    valid_param_count = sum([bool(v) for k,v in param_dict.items()])
-    if valid_param_count == len(param_dict):
-        return True
-    elif valid_param_count == 0:
-        return False
-    else:
-        raise ValueError(f'invalid conditional params: {param_dict}')

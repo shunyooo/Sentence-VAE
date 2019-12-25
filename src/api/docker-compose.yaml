@@ -1,0 +1,12 @@
+version: '3.7'
+services:
+  flask:
+    build: docker/flask
+    ports:
+      - 8888:8888
+    volumes:
+      - ./:$HOME
+    working_dir: $HOME
+    command: bash
+    tty: true
+    stdin_open: true

@@ -8,11 +8,7 @@ from torch.utils.data import Dataset
 from nltk.tokenize import TweetTokenizer
 
 from utils import OrderedCounter
-
-PAD_INDEX = 0
-UNK_INDEX = 1
-SOS_INDEX = 2
-EOS_INDEX = 3
+from constant import SOS_INDEX, UNK_INDEX, PAD_INDEX, EOS_INDEX
 
 class PTB(Dataset):
 
