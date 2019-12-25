@@ -3,9 +3,10 @@ import nltk
 import torch
 import numpy as np
 from constant import PAD_INDEX, SOS_INDEX
+from utils import ids2ptext
 
 
-def write_tensorboard_valid_metric(writer, valid_tgt_id_list, decoded_id_list, train_tgt_id_list):
+def write_tensorboard_valid_metric(writer, valid_tgt_id_list, decoded_id_list, train_tgt_id_list, train_tgt_ptb, split, epoch):
     # 各種指標の計測（BLEU, Distinct-1, 2, full, Train_contains_decode）
     # BLEU
     bleu = calculate_bleu(valid_tgt_id_list, decoded_id_list)
@@ -27,7 +28,7 @@ def write_tensorboard_valid_metric(writer, valid_tgt_id_list, decoded_id_list, t
     save_decode_index_list = list(range(0, dlen, int(dlen / n_sample)))
     for i in save_decode_index_list:
         save_ids = valid_tgt_id_list[i] if epoch == 0 else decoded_id_list[i]
-        writer.add_text(f'test-decode-{i}', f'```{ids2ptext(save_ids, train_target_ptb.i2w)}```', epoch)
+        writer.add_text(f'test-decode-{i}', f'```{ids2ptext(save_ids, train_tgt_ptb.i2w)}```', epoch)
 
 
 # utils
