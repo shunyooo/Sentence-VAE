@@ -59,7 +59,10 @@ def idx2word(idx, i2w, pad_idx):
 
 
 def ids2text(id_list, i2w, sep=''):
-    return sep.join([i2w[f'{i}'] for i in id_list])
+    assert type(id_list) != str
+    ws = [i2w[f'{i}'] for i in id_list]
+    ws = [w for w in ws if w is not None]
+    return sep.join(ws)
 
 
 def ids2ptext(id_list, i2w, sep=''):
