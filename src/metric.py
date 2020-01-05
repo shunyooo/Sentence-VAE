@@ -28,12 +28,12 @@ def write_tensorboard_valid_metric(writer, valid_tgt_id_list, decoded_id_list, t
 
 def write_bleu(writer, decoded_ids, target_ids, split, epoch):
     bleu = calculate_bleu(target_ids, decoded_ids)
-    writer.add_scalar(f"{split.upper()}/BLEU", bleu, epoch)
+    writer.add_scalar(f"{split.upper()}-Epoch/BLEU", bleu, epoch)
 
 
 def write_novelty(writer, decoded_ids, train_ids, split, epoch):
     contain_dict = summarize_full_contains(train_ids, decoded_ids)
-    writer.add_scalar(f"{split.upper()}/novelty", contain_dict['decode_novelty'], epoch)
+    writer.add_scalar(f"{split.upper()}-Epoch/novelty", contain_dict['decode_novelty'], epoch)
 
 
 def write_distinct(writer, ids, split, epoch, ngrams=[1, 2, 3, 'full']):
@@ -41,7 +41,7 @@ def write_distinct(writer, ids, split, epoch, ngrams=[1, 2, 3, 'full']):
     distinct_dict, _ = flat_and_cal_diverse(ids, ngrams)
     for k, v in distinct_dict.items():
         if 'diversity' in k:
-            writer.add_scalar(f"{split.upper()}/{k}", v, epoch)
+            writer.add_scalar(f"{split.upper()}-Epoch/{k}", v, epoch)
 
 
 def write_token_samples(writer, ids, i2w, epoch, n_sample=5):
