@@ -272,11 +272,11 @@ class POSVAE(nn.Module):
         KL_weight = self._kl_anneal_function(args.anneal_function, step, args.k, args.x0)
         loss = (POS_NLL_loss + TEXT_NLL_loss + KL_weight * KL_loss)/batch_size
         return {
-            'loss': loss,
-            'POS_NLL_loss': POS_NLL_loss,
-            'TEXT_NLL_loss': TEXT_NLL_loss,
-            'KL_weight': KL_weight,
-            'KL_loss': KL_loss,
+            'Loss': loss,
+            'POS_NLL_Loss': POS_NLL_loss,
+            'TEXT_NLL_Loss': TEXT_NLL_loss,
+            'KL_Weight': KL_weight,
+            'KL_Loss': KL_loss,
         }
 
 
