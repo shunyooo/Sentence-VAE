@@ -314,7 +314,6 @@ class POSVAE(nn.Module):
         # Encode
         assert pos_sequence.size(0) == pos_length.size(0) == z.size(0)
         batch_size = pos_sequence.size(0)
-        pos_embedding = self.pos_embedding(pos_sequence)
         init_state = self.latent2pos_encoder_init_hidden(z)
         pos_hidden = self.pos_encode(pos_sequence, pos_length, init_state)
         # [z, pos_hidden] を decoder へ
