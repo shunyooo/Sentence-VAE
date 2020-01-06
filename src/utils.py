@@ -58,16 +58,15 @@ def idx2word(idx, i2w, pad_idx):
     return sent_str
 
 
-def ids2text(id_list, i2w, sep=''):
+def ids2words(id_list, i2w, ignore_ids=[EOS_INDEX, PAD_INDEX, SOS_INDEX]):
     assert type(id_list) != str
-    ws = [i2w[f'{i}'] for i in id_list]
+    ws = [i2w[f'{i}'] for i in id_list if i not in ignore_ids]
     ws = [w for w in ws if w is not None]
-    return sep.join(ws)
+    return ws
 
 
-def ids2ptext(id_list, i2w, sep=''):
-    text = ids2text(id_list, i2w, sep)
-    return text.replace('<eos>', '').replace('<pad>', '')
+def ids2text(id_list, i2w, sep='', **kwags):
+    return sep.join(ids2words(id_list, i2w, **kwags))
 
 
 def words2ids(words, w2i):
