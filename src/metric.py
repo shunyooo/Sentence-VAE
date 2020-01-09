@@ -3,10 +3,11 @@ import nltk
 import torch
 import numpy as np
 from constant import PAD_INDEX, SOS_INDEX, EOS_INDEX
-from utils import ids2ptext
+from utils import ids2text
+import pandas as pd
 
 
-def write_tensorboard_valid_metric(writer, valid_tgt_id_list, decoded_id_list, train_tgt_id_list, text_i2w, split, epoch):
+def write_tensorboard_valid_metric(writer, valid_tgt_id_list, decoded_id_list, multi_decoded_id_list, train_tgt_id_list, text_i2w, split, epoch):
     # 各種指標の計測（BLEU, Distinct-1, 2, full, Train_contains_decode）
     assert SOS_INDEX not in flat_list(train_tgt_id_list + valid_tgt_id_list)
     assert EOS_INDEX in flat_list(train_tgt_id_list) and EOS_INDEX in flat_list(valid_tgt_id_list)
@@ -16,6 +17,9 @@ def write_tensorboard_valid_metric(writer, valid_tgt_id_list, decoded_id_list, t
 
     # Distinct
     write_distinct(writer, decoded_id_list, split, epoch)
+
+    # Multi Distinct
+    write_multi_distinct(writer, multi_decoded_id_list, split, epoch)
 
     # コピー率
     write_novelty(writer, decoded_id_list, train_tgt_id_list, split, epoch)
@@ -32,15 +36,29 @@ def write_bleu(writer, decoded_ids, target_ids, split, epoch):
 
 
 def write_novelty(writer, decoded_ids, train_ids, split, epoch):
-    contain_dict = summarize_full_contains(train_ids, decoded_ids)
+    contain_dict = calculate_novelty(train_ids, decoded_ids)
     writer.add_scalar(f"{split.upper()}-Epoch/novelty", contain_dict['decode_novelty'], epoch)
+
+
+def write_multi_distinct(writer, multi_ids, split, epoch, ngrams=[1, 2, 3, 'full']):
+    # Distinct-1, 2, full
+    distinct_dict_list = []
+    for ids in multi_ids:
+        distinct_dict, _ = flat_and_calculate_distinct(ids, ngrams)
+        distinct_dict_list.append(distinct_dict)
+    distinct_dict = pd.DataFrame(distinct_dict_list).mean().to_dict()
+    distinct_dict = {f'multi_{k}': v for k,v in distinct_dict.items()}
+
+    for k, v in distinct_dict.items():
+        if 'distinct' in k:
+            writer.add_scalar(f"{split.upper()}-Epoch/{k}", v, epoch)
 
 
 def write_distinct(writer, ids, split, epoch, ngrams=[1, 2, 3, 'full']):
     # Distinct-1, 2, full
-    distinct_dict, _ = flat_and_cal_diverse(ids, ngrams)
+    distinct_dict, _ = flat_and_calculate_distinct(ids, ngrams)
     for k, v in distinct_dict.items():
-        if 'diversity' in k:
+        if 'distinct' in k:
             writer.add_scalar(f"{split.upper()}-Epoch/{k}", v, epoch)
 
 
@@ -49,7 +67,7 @@ def write_token_samples(writer, ids, i2w, epoch, n_sample=5):
     save_decode_index_list = list(range(0, dlen, int(dlen / n_sample)))
     for i in save_decode_index_list:
         save_ids = ids[i]
-        writer.add_text(f'test-decode-{i}', f'```{ids2ptext(save_ids, i2w)}```', epoch)
+        writer.add_text(f'test-decode-{i}', f'```{ids2text(save_ids, i2w)}```', epoch)
 
 
 # utils
@@ -99,7 +117,7 @@ def count_contains(inner_list, outer_list):
     return sum([inner in outer_list for inner in inner_list])
 
 
-def summarize_full_contains(train_lines, decode_lines):
+def calculate_novelty(train_lines, decode_lines):
     if get_item_dtype(train_lines) == int:
         train_lines = remove_pad_index(train_lines)
         train_lines = [tuple(ids) for ids in train_lines]
@@ -136,7 +154,7 @@ def calculate_bleu(references, hypotheses, sm_func=None):
     return corpus_bleu(list_of_references, hypotheses, smoothing_function=sm_func)
 
 
-# ------------------- DIVERSITY/DISTINCT -------------------
+# ------------------- DISTINCT -------------------
 def ngram(words, n):
     # ngramに分割
     if n == 'full':
@@ -156,23 +174,23 @@ def flat_list(_llist, n=1):
     return all_list
 
 
-def cal_mean(_list):
+def calculate_mean(_list):
     # 平均算出
     return sum(_list) / len(_list)
 
 
-def cal_diverse(token_list):
+def calculate_distinct(token_list):
     # 重複なし生成単語リスト
     unique_count = len(set(token_list))
     # 多様性
-    diversity = unique_count / len(token_list) if unique_count > 0 else 0
+    distinct = unique_count / len(token_list) if unique_count > 0 else 0
     return {
         'unique_count': unique_count,
-        'diversity': diversity,
+        'distinct': distinct,
     }
 
 
-def flat_and_cal_diverse(text_list, ngrams):
+def flat_and_calculate_distinct(text_list, ngrams):
     # text_listから多様性を算出
     # 重複あり生成単語リスト
     res_dict = {}
@@ -180,9 +198,9 @@ def flat_and_cal_diverse(text_list, ngrams):
     for ngram in ngrams:
         token_list = flat_list(text_list, ngram)
         suffix = f'{ngram}gram' if ngram != 'full' else 'full'
-        d = cal_diverse(token_list)
+        d = calculate_distinct(token_list)
         d[f'unique_count_{suffix}'] = d.pop('unique_count')
-        d[f'diversity_{suffix}'] = d.pop('diversity')
+        d[f'distinct_{suffix}'] = d.pop('distinct')
         d[f'duplicate_count_{suffix}'] = len(token_list)
         res_dict.update(d)
         data_dict.update({f'token_list_{suffix}': token_list})

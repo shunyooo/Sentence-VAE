@@ -18,3 +18,9 @@ def words2input(words, w2i):
     sample_input = to_tensor(id_list).view(1,-1).to(dtype=torch.int64)
     sample_length = to_tensor([len(id_list)]).to(dtype=torch.int64)
     return {'input': sample_input, 'length': sample_length}
+
+
+def sample_z(mean, logv, n=1):
+	mean, std = mean.squeeze(), torch.exp(0.5 * logv).squeeze()
+	z_dist = torch.distributions.normal.Normal(mean, std)
+	return z_dist.sample((n,))

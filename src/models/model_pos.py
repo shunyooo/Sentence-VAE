@@ -14,11 +14,6 @@ class POSVAE(nn.Module):
     def __init__(self, vocab_size, pos_vocab_size, embedding_size, pos_embedding_size, rnn_type, hidden_size, 
         word_dropout, embedding_dropout, latent_size, tgt_max_sequence_length, pos_max_sequence_length, 
         num_layers=1, bidirectional=False, ):
-        """
-        Extention
-        ■ bow loss : use_bow_loss, bow_hidden_size で指定
-        ■ diff vocab input : InputとOutputでvocabが違う場合に指定. forwardのInput等に影響あり
-        """
 
         super().__init__()
 
@@ -288,12 +283,22 @@ class POSVAE(nn.Module):
         target_no_eos[target_no_eos == EOS_INDEX] = 0
         # SOSの追加
         sos_ids = LongTensor(batch_size, 1).fill_(SOS_INDEX)
-        new_input = torch.cat([sos_ids, target_no_eos], dim=1)[:, :seq_size]
+        new_input = torch.cat([sos_ids, target_no_eos], dim=1)# [:, :seq_size] たぶんいらない
         # lengthの算出
         col, idx = (target == EOS_INDEX).nonzero(as_tuple=True)
         lengths = LongTensor(batch_size).fill_(seq_size)
         lengths[col] = idx + 1
         return new_input, lengths
+
+
+    def pos_text_inference(self, *args, **kwags):
+        pos_decoded_ids = self.pos_inference(*args, **kwags) # z → POS
+        pos_decoded_input, pos_decoded_length = self.target2input(pos_decoded_ids)  # POS → POS Input
+        text_decoded_ids = self.text_inference(pos_decoded_input, pos_decoded_length, kwags.get('z')) # POS Input → Text
+        return {
+            'pos_decoded_ids': pos_decoded_ids,
+            'text_decoded_ids': text_decoded_ids,
+        }
 
 
     def pos_inference(self, n=4, z=None):
