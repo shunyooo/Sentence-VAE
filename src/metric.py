@@ -40,7 +40,7 @@ def write_novelty(writer, decoded_ids, train_ids, split, epoch):
     writer.add_scalar(f"{split.upper()}-Epoch/novelty", contain_dict['decode_novelty'], epoch)
 
 
-def write_multi_distinct(writer, multi_ids, split, epoch, ngrams=[1, 2, 3, 'full']):
+def write_multi_distinct(writer, multi_ids, split, epoch, ngrams=[1, 2, 3, 4, 5, 6, 7, 8, 'full']):
     # Distinct-1, 2, full
     distinct_dict_list = []
     for ids in multi_ids:
