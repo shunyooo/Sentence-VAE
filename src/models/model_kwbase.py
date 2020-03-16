@@ -4,6 +4,7 @@ import torch.nn.utils.rnn as rnn_utils
 from .model_utils import to_var
 from constant import PAD_INDEX
 import numpy as np
+import math
 
 NLL = torch.nn.NLLLoss(reduction='sum', ignore_index=PAD_INDEX)
 
@@ -274,6 +275,10 @@ class SentenceVAE(nn.Module):
         # Negative Log Likelihood
         NLL_loss = NLL(logp, target.view(-1))
 
+        # Perplexity
+        # https://github.com/IBM/pytorch-seq2seq/blob/master/seq2seq/loss/loss.py
+        perplexity = math.exp(NLL_loss)/batch_size
+
         # KL Divergence
         if self.is_conditional:
             KL_loss = self.gaussian_kld(mean, logv, cond_mean, cond_logv)
@@ -287,6 +292,7 @@ class SentenceVAE(nn.Module):
         
         loss_dict = {
             'loss': loss,
+            'perplexity': perplexity,
             'NLL_loss': NLL_loss,
             'KL_weight': KL_weight,
             'KL_loss': KL_loss,
