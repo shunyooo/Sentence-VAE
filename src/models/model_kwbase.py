@@ -277,7 +277,12 @@ class SentenceVAE(nn.Module):
 
         # Perplexity
         # https://github.com/IBM/pytorch-seq2seq/blob/master/seq2seq/loss/loss.py
-        perplexity = math.exp(NLL_loss)/batch_size
+        nll = NLL_loss/batch_size
+        _MAX_EXP = 200
+        if nll > _MAX_EXP:
+            print(f"WARNING: Loss {nll.item()} exceeded maximum value, capping to e^{_MAX_EXP}")
+            nll = _MAX_EXP
+        perplexity = math.exp(nll)
 
         # KL Divergence
         if self.is_conditional:
