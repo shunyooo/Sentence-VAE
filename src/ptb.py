@@ -12,7 +12,7 @@ from constant import SOS_INDEX, UNK_INDEX, PAD_INDEX, EOS_INDEX
 
 class PTB(Dataset):
 
-    def __init__(self, data_dir, split,  create_data, **kwargs):
+    def __init__(self, data_dir, split,  create_data, tokenize=None, **kwargs):
 
         super().__init__()
         self.data_dir = data_dir
@@ -26,6 +26,8 @@ class PTB(Dataset):
 
         # TODO: 余計なデータを作らないように
         # self.use_only_input = kwargs.get('use_only_input', False)
+        default_tokenizer = TweetTokenizer(preserve_case=False)
+        self.tokenize = tokenize if tokenize else default_tokenizer.tokenize
 
         if create_data:
             print("Creating new %s ptb data."%split.upper())
@@ -103,14 +105,12 @@ class PTB(Dataset):
         else:
             self._load_vocab()
 
-        tokenizer = TweetTokenizer(preserve_case=False)
-
         data = defaultdict(dict)
         with open(self.raw_data_path, 'r') as file:
 
             for i, line in enumerate(file):
 
-                words = tokenizer.tokenize(line)
+                words = self.tokenize(line)
 
                 input = ['<sos>'] + words
                 input = input[:self.max_sequence_length]
@@ -142,8 +142,6 @@ class PTB(Dataset):
 
         assert self.split == 'train', "Vocablurary can only be created for training file."
 
-        tokenizer = TweetTokenizer(preserve_case=False)
-
         w2c = OrderedCounter()
         w2i = dict()
         i2w = dict()
@@ -163,7 +161,7 @@ class PTB(Dataset):
         with open(self.raw_data_path, 'r') as file:
 
             for i, line in enumerate(file):
-                words = tokenizer.tokenize(line)
+                words = self.tokenize(line)
                 w2c.update(words)
 
             for w, c in w2c.items():

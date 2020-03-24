@@ -7,6 +7,7 @@ import numpy as np
 import math
 
 NLL = torch.nn.NLLLoss(reduction='sum', ignore_index=PAD_INDEX)
+CrossEntropy = torch.nn.CrossEntropyLoss()
 
 class SentenceVAE(nn.Module):
 
@@ -276,13 +277,8 @@ class SentenceVAE(nn.Module):
         NLL_loss = NLL(logp, target.view(-1))
 
         # Perplexity
-        # https://github.com/IBM/pytorch-seq2seq/blob/master/seq2seq/loss/loss.py
-        nll = NLL_loss/batch_size
-        _MAX_EXP = 200
-        if nll > _MAX_EXP:
-            print(f"WARNING: Loss {nll.item()} exceeded maximum value, capping to e^{_MAX_EXP}")
-            nll = _MAX_EXP
-        perplexity = math.exp(nll)
+        cross_entropy = CrossEntropy(logp.detach(), target.view(-1).detach())
+        perplexity = torch.exp(cross_entropy).detach()
 
         # KL Divergence
         if self.is_conditional:
@@ -297,6 +293,7 @@ class SentenceVAE(nn.Module):
         
         loss_dict = {
             'loss': loss,
+            'CrossEntropy': cross_entropy,
             'perplexity': perplexity,
             'NLL_loss': NLL_loss,
             'KL_weight': KL_weight,
